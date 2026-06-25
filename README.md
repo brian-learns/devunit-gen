@@ -3,6 +3,20 @@
 Generate a systemd **--user** unit file from the current directory, then optionally
 open it in your editor, reload systemd, and start the service — all in one command.
 
+## Prerequsite
+By default, systemd user services are terminated the moment you close your SSH session or log out of your desktop. 
+```
+loginctl show-user $USER --property=Linger
+```
+needs to show
+```
+Linger=yes
+```
+or you need to run
+```
+sudo loginctl enable-linger $USER
+```
+
 ## Quick start
 
 ```bash
