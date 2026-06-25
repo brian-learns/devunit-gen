@@ -10,6 +10,115 @@ import sys
 from pathlib import Path
 
 
+def build_unit_lines(args) -> list[str]:
+    """Build the list of lines for a systemd user unit file.
+
+    This is a pure function (no side effects) suitable for unit testing.
+    """
+    description = args.desc or f"Dev server: {args.name}"
+    directory = os.path.expanduser(args.dir)
+
+    lines = [
+        "[Unit]",
+        f"Description={description}",
+        "After=network.target",
+        "",
+        "[Service]",
+        "Type=simple",
+        f"WorkingDirectory={directory}",
+    ]
+
+    if args.cmd:
+        lines.append(f"ExecStart={args.cmd}")
+    else:
+        lines.extend(
+            [
+                "# <EDIT> Add your ExecStart below:",
+                "# ExecStart=/usr/bin/python3 -m http.server 8000",
+            ]
+        )
+
+    if args.env:
+        for env in args.env:
+            lines.append(f'Environment="{env}"')
+    else:
+        lines.extend(
+            [
+                "# <EDIT> Add env vars if needed:",
+                '# Environment="DEBUG=1"',
+            ]
+        )
+
+    lines.extend(
+        [
+            f"Restart={args.restart}",
+            f"RestartSec={args.restart_sec}",
+            "StandardOutput=journal",
+            "StandardError=journal",
+            "",
+            "[Install]",
+            "WantedBy=default.target",
+            "",
+        ]
+    )
+    return lines
+
+
+def generate_unit_file(args) -> Path | None:
+    """Build the unit file, write it, and optionally edit / reload / start.
+
+    Returns the path of the generated unit file, or None if it was skipped
+    (e.g. already exists and --force not given).
+    """
+    # Validate service name early so we don't write a file with an invalid name
+    if args.start:
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", args.name):
+            print(f"Error: invalid service name '{args.name}'", file=sys.stderr)
+            sys.exit(1)
+
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit_path = unit_dir / f"{args.name}.service"
+
+    if unit_path.exists() and not args.force:
+        print(
+            f"Error: {unit_path} already exists. Use --force to overwrite.",
+            file=sys.stderr,
+        )
+        return None
+
+    lines = build_unit_lines(args)
+    unit_path.write_text("\n".join(lines))
+    print(f"Generated {unit_path}")
+
+    # Open editor
+    if not args.no_edit and sys.stdin.isatty():
+        editor = os.environ.get("EDITOR", "vi")
+        editor_path = shutil.which(editor)
+        if editor_path is None:
+            print(
+                f"Warning: editor '{editor}' not found; skipping edit.",
+                file=sys.stderr,
+            )
+        else:
+            subprocess.run([editor_path, str(unit_path)])  # noqa: S603  # nosec
+            print(f"Editor closed. Saved to {unit_path}")
+
+    # Reload so systemctl sees the new/changed unit
+    subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"])  # nosec
+    print("Ran systemctl --user daemon-reload")
+
+    if args.start:
+        subprocess.run(  # noqa: S603  # nosec
+            ["/usr/bin/systemctl", "--user", "start", f"{args.name}.service"]
+        )
+        print(f"Started {args.name}.service")
+
+    return unit_path
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate a systemd user unit from the current directory")
     parser.add_argument("name", help="Service name (becomes name.service)")
@@ -68,84 +177,8 @@ def main():
     )
 
     args = parser.parse_args()
-
-    unit_dir = Path.home() / ".config" / "systemd" / "user"
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    unit_path = unit_dir / f"{args.name}.service"
-
-    if unit_path.exists() and not args.force:
-        print(
-            f"Error: {unit_path} already exists. Use --force to overwrite.",
-            file=sys.stderr,
-        )
+    if generate_unit_file(args) is None:
         sys.exit(1)
-
-    description = args.desc or f"Dev server: {args.name}"
-    directory = os.path.expanduser(args.dir)
-
-    # Build unit file line-by-line so indentation stays clean
-    lines = []
-    lines.append("[Unit]")
-    lines.append(f"Description={description}")
-    lines.append("After=network.target")
-    lines.append("")
-    lines.append("[Service]")
-    lines.append("Type=simple")
-    lines.append(f"WorkingDirectory={directory}")
-
-    if args.cmd:
-        lines.append(f"ExecStart={args.cmd}")
-    else:
-        lines.append("# <EDIT> Add your ExecStart below:")
-        lines.append("# ExecStart=/usr/bin/python3 -m http.server 8000")
-
-    if args.env:
-        for env in args.env:
-            lines.append(f'Environment="{env}"')
-    else:
-        lines.append("# <EDIT> Add env vars if needed:")
-        lines.append('# Environment="DEBUG=1"')
-
-    lines.append(f"Restart={args.restart}")
-    lines.append(f"RestartSec={args.restart_sec}")
-    lines.append("StandardOutput=journal")
-    lines.append("StandardError=journal")
-    lines.append("")
-    lines.append("[Install]")
-    lines.append("WantedBy=default.target")
-    lines.append("")
-
-    unit_path.write_text("\n".join(lines))
-    print(f"Generated {unit_path}")
-
-    # Open editor
-    if not args.no_edit and sys.stdin.isatty():
-        editor = os.environ.get("EDITOR", "vi")
-        editor_path = shutil.which(editor)
-        if editor_path is None:
-            print(
-                f"Warning: editor '{editor}' not found; skipping edit.",
-                file=sys.stderr,
-            )
-        else:
-            subprocess.run([editor_path, str(unit_path)])  # noqa: S603  # nosec
-            print(f"Editor closed. Saved to {unit_path}")
-
-    # Reload so systemctl sees the new/changed unit
-    subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"])  # nosec
-    print("Ran systemctl --user daemon-reload")
-
-    if args.start:
-        # Validate service name: only alphanumeric, underscore, hyphen, dot
-        import re
-
-        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", args.name):
-            print(f"Error: invalid service name '{args.name}'", file=sys.stderr)
-            sys.exit(1)
-        subprocess.run(  # noqa: S603  # nosec
-            ["/usr/bin/systemctl", "--user", "start", f"{args.name}.service"]
-        )
-        print(f"Started {args.name}.service")
 
 
 if __name__ == "__main__":
