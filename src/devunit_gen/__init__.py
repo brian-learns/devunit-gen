@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from devunit-gen!")
+from .devunit_gen import main as main
