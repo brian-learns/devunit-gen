@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """Generate a systemd --user unit file and optionally open it in vi."""
+
 # huggingface chat agentic with Kimi-K2.6 via fireworks-ai 2026-05-29
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate a systemd user unit from the current directory"
-    )
+    parser = argparse.ArgumentParser(description="Generate a systemd user unit from the current directory")
     parser.add_argument("name", help="Service name (becomes name.service)")
     parser.add_argument(
         "--cmd",
-        help='Command to run, e.g. "python -m http.server 8000". '
-             'If omitted, a placeholder is inserted.',
+        help='Command to run, e.g. "python -m http.server 8000". If omitted, a placeholder is inserted.',
     )
     parser.add_argument(
         "--desc",
@@ -24,8 +23,8 @@ def main():
     )
     parser.add_argument(
         "--dir",
-        default=os.getcwd(),
-        help=f"Working directory (default: {os.getcwd()})",
+        default=Path.cwd(),
+        help=f"Working directory (default: {Path.cwd()})",
     )
     parser.add_argument(
         "--env",
@@ -37,8 +36,13 @@ def main():
         "--restart",
         default="on-failure",
         choices=[
-            "no", "on-success", "on-failure", "on-abnormal",
-            "on-watchdog", "on-abort", "always",
+            "no",
+            "on-success",
+            "on-failure",
+            "on-abnormal",
+            "on-watchdog",
+            "on-abort",
+            "always",
         ],
     )
     parser.add_argument(
@@ -71,8 +75,7 @@ def main():
 
     if unit_path.exists() and not args.force:
         print(
-            f"Error: {unit_path} already exists. "
-            "Use --force to overwrite.",
+            f"Error: {unit_path} already exists. Use --force to overwrite.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -118,15 +121,30 @@ def main():
     # Open editor
     if not args.no_edit and sys.stdin.isatty():
         editor = os.environ.get("EDITOR", "vi")
-        subprocess.run([editor, str(unit_path)])
-        print(f"Editor closed. Saved to {unit_path}")
+        editor_path = shutil.which(editor)
+        if editor_path is None:
+            print(
+                f"Warning: editor '{editor}' not found; skipping edit.",
+                file=sys.stderr,
+            )
+        else:
+            subprocess.run([editor_path, str(unit_path)])  # noqa: S603  # nosec
+            print(f"Editor closed. Saved to {unit_path}")
 
     # Reload so systemctl sees the new/changed unit
-    subprocess.run(["systemctl", "--user", "daemon-reload"])
+    subprocess.run(["/usr/bin/systemctl", "--user", "daemon-reload"])  # nosec
     print("Ran systemctl --user daemon-reload")
 
     if args.start:
-        subprocess.run(["systemctl", "--user", "start", f"{args.name}.service"])
+        # Validate service name: only alphanumeric, underscore, hyphen, dot
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", args.name):
+            print(f"Error: invalid service name '{args.name}'", file=sys.stderr)
+            sys.exit(1)
+        subprocess.run(  # noqa: S603  # nosec
+            ["/usr/bin/systemctl", "--user", "start", f"{args.name}.service"]
+        )
         print(f"Started {args.name}.service")
 
 
