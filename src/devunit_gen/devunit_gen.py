@@ -120,6 +120,7 @@ def generate_unit_file(args) -> Path | None:
 
 
 def main():
+    """Parse CLI arguments and generate the systemd user unit file."""
     parser = argparse.ArgumentParser(description="Generate a systemd user unit from the current directory")
     parser.add_argument("name", help="Service name (becomes name.service)")
     parser.add_argument(
